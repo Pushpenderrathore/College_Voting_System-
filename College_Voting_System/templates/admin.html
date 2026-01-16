@@ -1,0 +1,163 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="row">
+  <div class="col-md-8">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h3 class="card-title mb-0">Live Results</h3>
+          <div>
+            <a class="btn btn-sm btn-outline-primary me-2" href="{{ url_for('export_results', format='csv') }}">Export CSV</a>
+            <a class="btn btn-sm btn-outline-secondary me-2" href="{{ url_for('export_results', format='json') }}">Export JSON</a>
+            <a class="btn btn-sm btn-outline-info me-2" href="{{ url_for('admin_users') }}">Manage Users</a>
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin_audit') }}">Audit Log</a>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table id="results-table" class="table table-striped">
+            <thead>
+              <tr><th>Candidate</th><th>Votes</th><th>Percent</th><th>Action</th></tr>
+            </thead>
+            <tbody>
+              {% for r in results %}
+              <tr data-id="{{ r.id }}">
+                <td>{{ r.name }}</td>
+                <td class="count">{{ r.count }}</td>
+                <td class="percent">{{ r.percent }}%</td>
+                <td>
+                  <button class="btn btn-sm btn-outline-danger delete-candidate-btn" 
+                          data-id="{{ r.id }}" data-name="{{ r.name }}" data-csrf="{{ csrf_token() }}">Delete</button>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mt-3 shadow-sm">
+      <div class="card-body">
+        <h5>Add candidate</h5>
+        <form method="post" action="{{ url_for('add_candidate') }}" class="row g-2">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="col-auto flex-grow-1">
+            <input name="name" class="form-control" placeholder="Candidate name" required>
+          </div>
+          <div class="col-auto">
+            <button class="btn btn-primary">Add</button>
+          </div>
+        </form>
+
+        <hr>
+        <div class="d-flex gap-2">
+          <button type="button" class="btn btn-warning" id="resetVotesBtn" data-csrf="{{ csrf_token() }}">Reset All Votes</button>
+          <form method="post" id="resetVotesForm" action="{{ url_for('reset_votes') }}" style="display:none">
+            <input type="hidden" name="csrf_token" id="reset_votes_csrf" value="{{ csrf_token() }}">
+          </form>
+          <form method="post" id="deleteCandidateFormTemplate" style="display:none">
+            <input type="hidden" name="csrf_token" id="delete_candidate_csrf" value="{{ csrf_token() }}">
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Delete confirmation modal -->
+<div class="modal fade" id="confirmDeleteModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Confirm delete</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p id="confirmDeleteMessage">Are you sure you want to delete this candidate?</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger" id="confirmDeleteButton">Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Reset confirmation modal -->
+<div class="modal fade" id="confirmResetModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Confirm reset</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p>Resetting all votes will erase current votes and set voters to not voted. This action is irreversible.</p>
+      </div>
+      <div class="modal-footer">
+        <form method="post" id="confirmResetForm" action="{{ url_for('reset_votes') }}">
+          <input type="hidden" name="csrf_token" id="confirm_reset_csrf" value="{{ csrf_token() }}">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-warning">Reset Votes</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+<script>
+(function(){
+  const socket = io();
+  socket.on('connect', function(){ console.log('Socket connected'); });
+  socket.on('results_update', function(data){
+    try{
+      const tbody = document.querySelector('#results-table tbody');
+      const rows = {};
+      tbody.querySelectorAll('tr').forEach(r => rows[r.getAttribute('data-id')] = r);
+      data.forEach(item => {
+        const id = String(item.id);
+        if(rows[id]){
+          rows[id].querySelector('.count').textContent = item.count;
+          rows[id].querySelector('.percent').textContent = item.percent + '%';
+        } else {
+          const tr = document.createElement('tr');
+          tr.setAttribute('data-id', id);
+          tr.innerHTML = `<td>${item.name}</td><td class="count">${item.count}</td><td class="percent">${item.percent}%</td><td><button class="btn btn-sm btn-outline-danger delete-candidate-btn" data-id="${item.id}" data-name="${item.name}" data-csrf="{{ csrf_token() }}">Delete</button></td>`;
+          tbody.appendChild(tr);
+        }
+      });
+    } catch(err){ console.error(err); }
+  });
+
+  // Delete candidate modal handling
+  const deleteModalEl = document.getElementById('confirmDeleteModal');
+  const deleteBs = new bootstrap.Modal(deleteModalEl);
+  document.querySelectorAll('.delete-candidate-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.dataset.id;
+      const name = btn.dataset.name;
+      const csrf = btn.dataset.csrf;
+      document.getElementById('confirmDeleteMessage').textContent = `Delete candidate ${name}?`;
+      const form = document.getElementById('deleteCandidateFormTemplate');
+      form.setAttribute('method','post');
+      form.setAttribute('action', `/delete_candidate/${id}`);
+      document.getElementById('delete_candidate_csrf').value = csrf;
+      deleteBs.show();
+    });
+  });
+  document.getElementById('confirmDeleteButton').addEventListener('click', ()=>{
+    document.getElementById('deleteCandidateFormTemplate').submit();
+  });
+
+  // Reset votes modal
+  const resetModalEl = document.getElementById('confirmResetModal');
+  const resetBs = new bootstrap.Modal(resetModalEl);
+  document.getElementById('resetVotesBtn').addEventListener('click', ()=>{
+    resetBs.show();
+  });
+})();
+</script>
+{% endblock %}

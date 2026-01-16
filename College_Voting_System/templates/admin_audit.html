@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-10">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h3 class="card-title mb-3">Audit Log</h3>
+        <table class="table table-sm table-striped">
+          <thead><tr><th>ID</th><th>Action</th><th>User</th><th>Details</th><th>Timestamp</th><th>Undo</th></tr></thead>
+          <tbody>
+            {% for a in audits %}
+            <tr>
+              <td>{{ a[0] }}</td>
+              <td>{{ a[1] }}</td>
+              <td>{{ a[2] }}</td>
+              <td>{{ a[3] }}</td>
+              <td>{{ a[4] }}</td>
+              <td>
+                {% if a[1] in ['promote_user','demote_user','add_candidate','delete_candidate'] %}
+                  <form method="post" action="{{ url_for('undo_audit', audit_id=a[0]) }}" style="display:inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button class="btn btn-sm btn-outline-secondary">Undo</button>
+                  </form>
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

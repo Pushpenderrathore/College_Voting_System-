@@ -1,0 +1,9 @@
+Flask>=2.2
+Flask-WTF>=1.1
+Flask-Limiter>=2.6
+Flask-SocketIO>=5.3
+itsdangerous>=2.0
+python-dotenv>=1.0
+# Optional for production SocketIO performance
+# eventlet>=0.33.0
+# gevent>=21.8.0
