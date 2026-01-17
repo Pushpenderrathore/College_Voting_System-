@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, redirect, session, url_for, flash, Response, stream_with_context, g
 import sqlite3
+import os
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
 import time
@@ -34,7 +35,71 @@ limiter = Limiter(app=app, key_func=get_remote_address, default_limits=["200 per
 socketio = SocketIO(app, async_mode='threading')
 serializer = URLSafeTimedSerializer(app.secret_key)
 
-DATABASE = "database.db"
+# Use persistent disk on Render, fallback to local for development
+DB_DIR = os.getenv('DB_DIR', 'College_Voting_System')
+os.makedirs(DB_DIR, exist_ok=True)
+DATABASE = os.path.join(DB_DIR, "database.db")
+
+def init_database():
+    """Initialize database if it doesn't exist"""
+    if not os.path.exists(DATABASE):
+        try:
+            db = sqlite3.connect(DATABASE)
+            cur = db.cursor()
+            cur.execute("PRAGMA foreign_keys = ON")
+            
+            # Create all tables
+            cur.execute("CREATE TABLE IF NOT EXISTS users("
+                       "id INTEGER PRIMARY KEY, "
+                       "username TEXT UNIQUE, "
+                       "password TEXT, "
+                       "role TEXT, "
+                       "voted INTEGER DEFAULT 0)")
+            
+            cur.execute("CREATE TABLE IF NOT EXISTS candidates("
+                       "id INTEGER PRIMARY KEY, "
+                       "name TEXT UNIQUE)")
+            
+            cur.execute("CREATE TABLE IF NOT EXISTS votes("
+                       "id INTEGER PRIMARY KEY, "
+                       "voter_id INTEGER, "
+                       "candidate_id INTEGER, "
+                       "timestamp TEXT, "
+                       "FOREIGN KEY(voter_id) REFERENCES users(id) ON DELETE CASCADE, "
+                       "FOREIGN KEY(candidate_id) REFERENCES candidates(id) ON DELETE CASCADE, "
+                       "UNIQUE(voter_id))")
+            
+            cur.execute("CREATE TABLE IF NOT EXISTS audit("
+                       "id INTEGER PRIMARY KEY, "
+                       "action TEXT, "
+                       "user TEXT, "
+                       "details TEXT, "
+                       "timestamp TEXT)")
+            
+            cur.execute("CREATE TABLE IF NOT EXISTS feedback("
+                       "id INTEGER PRIMARY KEY, "
+                       "user_id INTEGER, "
+                       "rating INTEGER, "
+                       "comments TEXT, "
+                       "timestamp TEXT, "
+                       "FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE, "
+                       "UNIQUE(user_id))")
+            
+            # Add default admin user
+            admin_pass = generate_password_hash("admin123")
+            cur.execute("INSERT OR IGNORE INTO users (username, password, role) VALUES (?, ?, ?)",
+                       ("admin", admin_pass, "admin"))
+            
+            # Add sample candidates
+            candidates = ["Alice", "Bob", "Charlie"]
+            for candidate in candidates:
+                cur.execute("INSERT OR IGNORE INTO candidates (name) VALUES (?)", (candidate,))
+            
+            db.commit()
+            db.close()
+            app.logger.info("Database initialized successfully")
+        except Exception as e:
+            app.logger.error("Failed to initialize database: %s", str(e))
 
 @app.context_processor
 def inject_csrf():
@@ -103,6 +168,11 @@ def has_user_given_feedback(user_id):
     cur = db.cursor()
     cur.execute("SELECT id FROM feedback WHERE user_id = ?", (user_id,))
     return cur.fetchone() is not None
+
+# Initialize database on app startup
+@app.before_request
+def before_request():
+    init_database()
 
 # --- Authentication improvements: password reset (console based email for now) ---
 @app.route('/reset-request', methods=['GET','POST'])

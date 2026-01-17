@@ -6,14 +6,17 @@ services:
     plan: free
     dockerfilePath: Dockerfile
     buildCommand: ""
-    startCommand: "gunicorn -k eventlet -w 1 --bind 0.0.0.0:$PORT app:app"
     envVars:
       - key: SECRET_KEY
         value: "CHANGE_ME"
         sync: false
-      - key: DATABASE_URL
-        value: "sqlite:///database.db"
+      - key: DB_DIR
+        value: "/app/data"
         sync: false
+    disk:
+      - name: data
+        mountPath: /app/data
+        sizeGB: 1
 
 # Optionally provision a managed Postgres on Render via the dashboard and set DATABASE_URL to the provided value
 # You can customize this file further or create multiple services (e.g., worker, cron) as needed.
