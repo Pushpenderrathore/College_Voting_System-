@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, redirect, session, url_for, flash, Response, stream_with_context, g
 import sqlite3
+import os
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
 import time
@@ -34,7 +35,10 @@ limiter = Limiter(app=app, key_func=get_remote_address, default_limits=["200 per
 socketio = SocketIO(app, async_mode='threading')
 serializer = URLSafeTimedSerializer(app.secret_key)
 
-DATABASE = "database.db"
+# Use persistent disk on Render, fallback to local for development
+DB_DIR = os.getenv('DB_DIR', 'College_Voting_System')
+os.makedirs(DB_DIR, exist_ok=True)
+DATABASE = os.path.join(DB_DIR, "database.db")
 
 @app.context_processor
 def inject_csrf():

@@ -12,8 +12,15 @@ services:
         value: "CHANGE_ME"
         sync: false
       - key: DATABASE_URL
-        value: "sqlite:///database.db"
+        value: "sqlite:///data/database.db"
         sync: false
+      - key: DB_DIR
+        value: "/app/data"
+        sync: false
+    disk:
+      - name: data
+        mountPath: /app/data
+        sizeGB: 1
 
 # Optionally provision a managed Postgres on Render via the dashboard and set DATABASE_URL to the provided value
 # You can customize this file further or create multiple services (e.g., worker, cron) as needed.
