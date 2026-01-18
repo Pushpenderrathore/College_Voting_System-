@@ -23,8 +23,8 @@ app.logger.setLevel('DEBUG')
 
 # Session & security settings (adjust for prod)
 app.config.update(
-    SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SECURE=False,  # set True in production with HTTPS
+    SESSION_COOKIE_HTTPONLY=False,
+    SESSION_COOKIE_SECURE=True,  # set True in production with HTTPS
     SESSION_COOKIE_SAMESITE='Lax',
     PERMANENT_SESSION_LIFETIME=timedelta(minutes=30),
 )
