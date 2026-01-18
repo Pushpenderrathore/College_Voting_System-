@@ -32,8 +32,14 @@ app.config.update(
 )
 
 csrf = CSRFProtect(app)
-limiter = Limiter(app=app, key_func=get_remote_address)
-socketio = SocketIO(app, async_mode="eventlet")
+
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    storage_uri=os.environ.get("REDIS_URL", "memory://")
+)
+
+socketio = SocketIO(app, async_mode="threading") # optional "eventlet"
 serializer = URLSafeTimedSerializer(app.secret_key)
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -290,7 +296,7 @@ def vote():
             cur.execute("UPDATE users SET voted=TRUE WHERE id=%s", (session["user_id"],))
             audit("vote", f"candidate={request.form['candidate']}")
             db.commit()
-            socketio.emit("results_update", get_results(), broadcast=True)
+            
             flash("Vote recorded", "success")
             voted = True
         except UniqueViolation:
@@ -341,6 +347,189 @@ def admin():
         return redirect(url_for("login"))
     return render_template("admin.html", results=get_results())
 
+from functools import wraps
+from flask import abort
+
+def admin_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if session.get("role") != "admin":
+            abort(403)
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+@app.route("/admin/users")
+@admin_required
+def admin_users():
+    db = get_db()
+    cur = db.cursor()
+    cur.execute("""
+        SELECT id, username, role, voted
+        FROM users
+        ORDER BY username
+    """)
+    users = cur.fetchall()
+    return render_template("admin_users.html", users=users)
+
+@app.route("/admin/users/<int:user_id>/promote", methods=["POST"])
+@admin_required
+def promote_user(user_id):
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute("SELECT username, role FROM users WHERE id=%s", (user_id,))
+    user = cur.fetchone()
+    if not user or user["role"] == "admin":
+        return redirect(url_for("admin_users"))
+
+    cur.execute("UPDATE users SET role='admin' WHERE id=%s", (user_id,))
+    audit("promote_user", f"user={user['username']}")
+    db.commit()
+
+    flash(f"{user['username']} promoted to admin", "success")
+    return redirect(url_for("admin_users"))
+
+
+@app.route("/admin/users/<int:user_id>/demote", methods=["POST"])
+@admin_required
+def demote_user(user_id):
+    if session.get("user_id") == user_id:
+        flash("You cannot demote yourself", "danger")
+        return redirect(url_for("admin_users"))
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute("SELECT username, role FROM users WHERE id=%s", (user_id,))
+    user = cur.fetchone()
+    if not user or user["role"] != "admin":
+        return redirect(url_for("admin_users"))
+
+    cur.execute("UPDATE users SET role='voter' WHERE id=%s", (user_id,))
+    audit("demote_user", f"user={user['username']}")
+    db.commit()
+
+    flash(f"{user['username']} demoted", "warning")
+    return redirect(url_for("admin_users"))
+
+@app.route("/admin/feedback")
+@admin_required
+def admin_feedback():
+    db = get_db()
+    cur = db.cursor()
+    cur.execute("""
+        SELECT u.username, f.rating, f.comments, f.timestamp
+        FROM feedback f
+        JOIN users u ON u.id = f.user_id
+        ORDER BY f.timestamp DESC
+    """)
+    feedback = cur.fetchall()
+    return render_template("admin_feedback.html", feedback=feedback)
+
+@app.route("/admin/audit")
+@admin_required
+def admin_audit():
+    db = get_db()
+    cur = db.cursor()
+    cur.execute("""
+        SELECT id, action, username, details, timestamp
+        FROM audit
+        ORDER BY timestamp DESC
+        LIMIT 500
+    """)
+    audits = cur.fetchall()
+    return render_template("admin_audit.html", audits=audits)
+
+@app.route("/add_candidate", methods=["POST"])
+@admin_required
+def add_candidate():
+    name = request.form["name"].strip()
+    db = get_db()
+    cur = db.cursor()
+
+    try:
+        cur.execute("INSERT INTO candidates (name) VALUES (%s)", (name,))
+        audit("add_candidate", f"name={name}")
+        db.commit()
+        socketio.emit("results_update", get_results())
+        flash("Candidate added", "success")
+    except UniqueViolation:
+        db.rollback()
+        flash("Candidate already exists", "danger")
+
+    return redirect(url_for("admin"))
+
+@app.route("/delete_candidate/<int:cid>", methods=["POST"])
+@admin_required
+def delete_candidate(cid):
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute("SELECT name FROM candidates WHERE id=%s", (cid,))
+    c = cur.fetchone()
+    if not c:
+        return redirect(url_for("admin"))
+
+    cur.execute("DELETE FROM candidates WHERE id=%s", (cid,))
+    audit("delete_candidate", f"name={c['name']}")
+    db.commit()
+
+    socketio.emit("results_update", get_results())
+    flash("Candidate deleted", "warning")
+    return redirect(url_for("admin"))
+
+
+@app.route("/undo_audit/<int:audit_id>", methods=["POST"])
+def undo_audit(audit_id):
+    if not admin_required():
+        return redirect(url_for("login"))
+
+    db = get_db()
+    cur = db.cursor()
+
+    cur.execute("""
+        SELECT action, details
+        FROM audit
+        WHERE id=%s
+    """, (audit_id,))
+    a = cur.fetchone()
+    if not a:
+        return redirect(url_for("admin_audit"))
+
+    action = a["action"]
+    details = a["details"] or ""
+
+    if action == "promote_user":
+        username = details.split("=")[1]
+        cur.execute("UPDATE users SET role='voter' WHERE username=%s", (username,))
+
+    elif action == "demote_user":
+        username = details.split("=")[1]
+        cur.execute("UPDATE users SET role='admin' WHERE username=%s", (username,))
+
+    elif action == "add_candidate":
+        name = details.split("=")[1]
+        cur.execute("DELETE FROM candidates WHERE name=%s", (name,))
+
+    elif action == "delete_candidate":
+        name = details.split("=")[1]
+        cur.execute("INSERT INTO candidates (name) VALUES (%s) ON CONFLICT DO NOTHING", (name,))
+
+    else:
+        flash("This action cannot be undone", "danger")
+        return redirect(url_for("admin_audit"))
+
+    cur.execute("DELETE FROM audit WHERE id=%s", (audit_id,))
+    audit("undo", f"reverted={action}")
+    db.commit()
+
+    socketio.emit("results_update", get_results())
+    flash("Action undone", "success")
+    return redirect(url_for("admin_audit"))
+
+
+
 @app.route("/admin/export")
 def export_results():
     if session.get("role") != "admin":
@@ -362,22 +551,24 @@ def export_results():
     return Response(out.getvalue(), mimetype="text/csv")
 
 @app.route("/reset_votes", methods=["POST"])
+@admin_required
 def reset_votes():
-    if session.get("role") != "admin":
-        return redirect(url_for("login"))
-
     db = get_db()
     cur = db.cursor()
     cur.execute("DELETE FROM votes")
     cur.execute("UPDATE users SET voted=FALSE WHERE role!='admin'")
     audit("reset_votes")
     db.commit()
-    socketio.emit("results_update", get_results(), broadcast=True)
+    socketio.emit("results_update", get_results())
     flash("Votes reset", "success")
     return redirect(url_for("admin"))
+
 
 @app.route("/logout")
 def logout():
     session.clear()
     flash("Logged out", "info")
     return redirect(url_for("login"))
+
+if __name__ == "__main__":
+    socketio.run(app, host="0.0.0.0", port=5000, debug=True)
