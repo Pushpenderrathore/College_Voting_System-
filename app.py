@@ -479,12 +479,9 @@ def delete_candidate(cid):
     flash("Candidate deleted", "warning")
     return redirect(url_for("admin"))
 
-
 @app.route("/undo_audit/<int:audit_id>", methods=["POST"])
+@admin_required
 def undo_audit(audit_id):
-    if not admin_required():
-        return redirect(url_for("login"))
-
     db = get_db()
     cur = db.cursor()
 
@@ -514,8 +511,10 @@ def undo_audit(audit_id):
 
     elif action == "delete_candidate":
         name = details.split("=")[1]
-        cur.execute("INSERT INTO candidates (name) VALUES (%s) ON CONFLICT DO NOTHING", (name,))
-
+        cur.execute(
+            "INSERT INTO candidates (name) VALUES (%s) ON CONFLICT DO NOTHING",
+            (name,)
+        )
     else:
         flash("This action cannot be undone", "danger")
         return redirect(url_for("admin_audit"))
@@ -527,8 +526,6 @@ def undo_audit(audit_id):
     socketio.emit("results_update", get_results())
     flash("Action undone", "success")
     return redirect(url_for("admin_audit"))
-
-
 
 @app.route("/admin/export")
 def export_results():
