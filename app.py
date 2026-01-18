@@ -1,5 +1,4 @@
 from flask import Flask, render_template, request, redirect, session, url_for, flash, Response, stream_with_context, g
-import sqlite3
 import os
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
@@ -7,6 +6,8 @@ import time
 import json
 import csv
 import io
+import psycopg2
+import psycopg2.extras
 
 # Security and realtime extensions
 from flask_wtf import CSRFProtect
@@ -37,72 +38,90 @@ socketio = SocketIO(app, async_mode='eventlet')
 serializer = URLSafeTimedSerializer(app.secret_key)
 
 # Use persistent disk on Render, fallback to local for development
-DB_DIR = os.getenv('DB_DIR', 'College_Voting_System')
-os.makedirs(DB_DIR, exist_ok=True)
-
-DATABASE = os.path.join(DB_DIR, "database.db")
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///database.db")
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is not set")
 
 def init_database():
-    """Initialize database if it doesn't exist"""
-    if not os.path.exists(DATABASE):
-        try:
-            db = sqlite3.connect(DATABASE)
-            cur = db.cursor()
-            cur.execute("PRAGMA foreign_keys = ON")
-            
-            # Create all tables
-            cur.execute("CREATE TABLE IF NOT EXISTS users("
-                       "id INTEGER PRIMARY KEY, "
-                       "username TEXT UNIQUE, "
-                       "password TEXT, "
-                       "role TEXT, "
-                       "voted INTEGER DEFAULT 0)")
-            
-            cur.execute("CREATE TABLE IF NOT EXISTS candidates("
-                       "id INTEGER PRIMARY KEY, "
-                       "name TEXT UNIQUE)")
-            
-            cur.execute("CREATE TABLE IF NOT EXISTS votes("
-                       "id INTEGER PRIMARY KEY, "
-                       "voter_id INTEGER, "
-                       "candidate_id INTEGER, "
-                       "timestamp TEXT, "
-                       "FOREIGN KEY(voter_id) REFERENCES users(id) ON DELETE CASCADE, "
-                       "FOREIGN KEY(candidate_id) REFERENCES candidates(id) ON DELETE CASCADE, "
-                       "UNIQUE(voter_id))")
-            
-            cur.execute("CREATE TABLE IF NOT EXISTS audit("
-                       "id INTEGER PRIMARY KEY, "
-                       "action TEXT, "
-                       "user TEXT, "
-                       "details TEXT, "
-                       "timestamp TEXT)")
-            
-            cur.execute("CREATE TABLE IF NOT EXISTS feedback("
-                       "id INTEGER PRIMARY KEY, "
-                       "user_id INTEGER, "
-                       "rating INTEGER, "
-                       "comments TEXT, "
-                       "timestamp TEXT, "
-                       "FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE, "
-                       "UNIQUE(user_id))")
-            
-            # Add default admin user
-            admin_pass = generate_password_hash("admin123")
-            cur.execute("INSERT OR IGNORE INTO users (username, password, role) VALUES (?, ?, ?)",
-                       ("admin", admin_pass, "admin"))
-            
-            # Add sample candidates
-            candidates = ["Alice", "Bob", "Charlie"]
-            for candidate in candidates:
-                cur.execute("INSERT OR IGNORE INTO candidates (name) VALUES (?)", (candidate,))
-            
-            db.commit()
-            db.close()
-            app.logger.info("Database initialized successfully")
-        except Exception as e:
-            app.logger.error("Failed to initialize database: %s", str(e))
+    try:
+        db = psycopg2.connect(DATABASE_URL)
+        cur = db.cursor()
+
+        # USERS
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            role TEXT NOT NULL,
+            voted BOOLEAN DEFAULT FALSE
+        )
+        """)
+
+        # CANDIDATES
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS candidates (
+            id SERIAL PRIMARY KEY,
+            name TEXT UNIQUE NOT NULL
+        )
+        """)
+
+        # VOTES
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS votes (
+            id SERIAL PRIMARY KEY,
+            voter_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+            candidate_id INTEGER REFERENCES candidates(id) ON DELETE CASCADE,
+            timestamp TIMESTAMP NOT NULL
+        )
+        """)
+
+        # AUDIT
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS audit (
+            id SERIAL PRIMARY KEY,
+            action TEXT,
+            "user" TEXT,
+            details TEXT,
+            timestamp TIMESTAMP
+        )
+        """)
+
+        # FEEDBACK
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS feedback (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+            rating INTEGER,
+            comments TEXT,
+            timestamp TIMESTAMP
+        )
+        """)
+
+        # DEFAULT ADMIN
+        admin_pass = generate_password_hash("admin123")
+        cur.execute("""
+        INSERT INTO users (username, password, role)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (username) DO NOTHING
+        """, ("admin", admin_pass, "admin"))
+
+        # DEFAULT CANDIDATES
+        for candidate in ["Alice", "Bob", "Charlie"]:
+            cur.execute("""
+            INSERT INTO candidates (name)
+            VALUES (%s)
+            ON CONFLICT (name) DO NOTHING
+            """, (candidate,))
+
+        db.commit()
+        cur.close()
+        db.close()
+
+        app.logger.info("PostgreSQL database initialized")
+
+    except Exception as e:
+        app.logger.exception("Database initialization failed")
 
 # Initialize database on app startup
 with app.app_context():
@@ -121,11 +140,12 @@ def handle_csrf_error(e):
 
 def get_db():
     if 'db' not in g:
-        conn = sqlite3.connect(DATABASE, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute('PRAGMA foreign_keys = ON')
-        g.db = conn
+        g.db = psycopg2.connect(
+            DATABASE_URL,
+            cursor_factory=psycopg2.extras.RealDictCursor
+        )
     return g.db
+
 
 @app.teardown_appcontext
 def close_db(exception=None):
@@ -302,7 +322,7 @@ def vote():
         return redirect(url_for('login'))
     db = get_db()
     cur = db.cursor()
-    cur.execute("SELECT voted FROM users WHERE id = ?", (session['user_id'],))
+    cur.execute("SELECT * FROM users WHERE username = %s", (username,))
     u = cur.fetchone()
     has_voted = bool(u['voted'])
     has_given_feedback = has_user_given_feedback(session['user_id'])
@@ -665,6 +685,4 @@ def logout():
     flash('Logged out', 'info')
     return redirect(url_for('login'))
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
 
