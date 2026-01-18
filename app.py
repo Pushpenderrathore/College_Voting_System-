@@ -310,6 +310,13 @@ def vote():
 # FEEDBACK (FIXED)
 # ------------------------------------------------------------------------------
 
+@app.route("/feedback", methods=["GET"])
+def feedback_page():
+    if "user_id" not in session:
+        return redirect(url_for("login"))
+    return render_template("feedback.html")
+
+
 @app.route("/feedback", methods=["POST"])
 def feedback():
     if "user_id" not in session:
