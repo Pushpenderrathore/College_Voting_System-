@@ -67,7 +67,11 @@
                   
                     <form method="post" action="/admin/users/5/promote" style="display:inline">
                       <input type="hidden" name="csrf_token" value="ImU3MWE5NzFkMGYwMjc1MjllZmUzNWQ4YWZhYTZmYmI1MWIzNmM0YWIi.aUY6_g.BlPPP4Yj8HkUqNF9eSQ1TiA_Iao">
-                      <button class="btn btn-sm btn-outline-success">Promote</button>
+                      <button
+                        class="btn btn-sm btn-outline-success"
+                        onclick="return confirm('Are you sure you want to promote this user to admin?')">
+                        Promote
+                      </button>
                     </form>
                   
                 </td>

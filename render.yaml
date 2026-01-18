@@ -7,8 +7,8 @@ services:
     dockerfilePath: Dockerfile
     buildCommand: ""
     envVars:
-      - key: SECRET_KEY
-        value: "CHANGE_ME"
+      - key: secret_key
+        generateValue: "true"
         sync: false
       - key: DB_DIR
         value: "/app/data"

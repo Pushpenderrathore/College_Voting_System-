@@ -17,14 +17,14 @@ from flask_socketio import SocketIO
 from itsdangerous import URLSafeTimedSerializer
 
 app = Flask(__name__)
-app.secret_key = "secret123"
+app.secret_key = os.environ.get("SECRET_KEY")
 # Enable debug logging
-app.logger.setLevel('DEBUG')
+app.logger.setLevel('DEBUG' if app.debug else 'INFO')
 
 # Session & security settings (adjust for prod)
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SECURE=False,  # set True in production with HTTPS
+    SESSION_COOKIE_SECURE=not app.debug , # set True in production with HTTPS
     SESSION_COOKIE_SAMESITE='Lax',
     PERMANENT_SESSION_LIFETIME=timedelta(minutes=30),
 )
@@ -32,13 +32,16 @@ app.config.update(
 # Initialize helpers
 csrf = CSRFProtect(app)
 limiter = Limiter(app=app, key_func=get_remote_address, default_limits=["200 per day", "50 per hour"])
-socketio = SocketIO(app, async_mode='threading')
+# socketio = SocketIO(app, async_mode='threading') 
+socketio = SocketIO(app, async_mode='eventlet')
 serializer = URLSafeTimedSerializer(app.secret_key)
 
 # Use persistent disk on Render, fallback to local for development
 DB_DIR = os.getenv('DB_DIR', 'College_Voting_System')
 os.makedirs(DB_DIR, exist_ok=True)
+
 DATABASE = os.path.join(DB_DIR, "database.db")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///database.db")
 
 def init_database():
     """Initialize database if it doesn't exist"""
@@ -100,6 +103,10 @@ def init_database():
             app.logger.info("Database initialized successfully")
         except Exception as e:
             app.logger.error("Failed to initialize database: %s", str(e))
+
+# Initialize database on app startup
+with app.app_context():
+    init_database()
 
 @app.context_processor
 def inject_csrf():
@@ -170,9 +177,9 @@ def has_user_given_feedback(user_id):
     return cur.fetchone() is not None
 
 # Initialize database on app startup
-@app.before_request
-def before_request():
-    init_database()
+#@app.before_request
+#def before_request():
+#   init_database()
 
 # --- Authentication improvements: password reset (console based email for now) ---
 @app.route('/reset-request', methods=['GET','POST'])
@@ -184,9 +191,10 @@ def reset_request():
             token = serializer.dumps(u['username'], salt='password-reset')
             reset_link = url_for('reset_password', token=token, _external=True)
             # In production send email; for now log and flash
-            app.logger.info('Password reset link for %s: %s', username, reset_link)
-            flash('Password reset link created and logged on the server (check logs).', 'info')
-            return redirect(url_for('login'))
+            if app.debug:
+                app.logger.info('Password reset link for %s: %s', username, reset_link)
+                flash('Password reset link created and logged on the server (check logs).', 'info')
+                return redirect(url_for('login'))
         flash('User not found', 'danger')
     return render_template('reset_request.html')
 
@@ -210,7 +218,7 @@ def reset_password(token):
         return redirect(url_for('login'))
     return render_template('reset_password.html', token=token)
 
-@limiter.limit('10 per minute')
+@limiter.limit('5 per minute') # corrected 10 to 5 Bcz its Better
 @app.route('/', methods=['GET','POST'])
 def login():
     if request.method == 'POST':
@@ -246,7 +254,7 @@ def login():
     return render_template('login.html')
 
 # Debug JSON endpoint to check login logic without establishing session
-@app.route('/debug/login_test', methods=['POST'])
+# @app.route('/debug/login_test', methods=['POST']) Even though guarded by if not app.debug, never deploy debug endpoints 
 def debug_login_test():
     if not app.debug:
         return {'error': 'disabled'}, 403
@@ -657,5 +665,6 @@ def logout():
     flash('Logged out', 'info')
     return redirect(url_for('login'))
 
-if __name__ == '__main__':
-    socketio.run(app, debug=True)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+

@@ -17,3 +17,5 @@ EXPOSE 8000
 
 # Use shell form to properly expand $PORT environment variable
 CMD exec gunicorn -k eventlet -w 1 --bind 0.0.0.0:$PORT app:app
+
+# IMPORTANT: SQLite requires single worker!
