@@ -6,8 +6,12 @@ import os, json, csv, io
 from datetime import datetime, timedelta
 
 import psycopg2
+import psycopg2.pool
 import psycopg2.extras
+
 from psycopg2.errors import UniqueViolation
+from psycopg2.pool import SimpleConnectionPool
+
 
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_wtf import CSRFProtect
@@ -26,7 +30,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev-secret")
 
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SECURE= True ,      # optional not app.debug,
+    SESSION_COOKIE_SECURE= not app.debug,
     SESSION_COOKIE_SAMESITE="Lax",
     PERMANENT_SESSION_LIFETIME=timedelta(minutes=30),
 )
@@ -51,6 +55,22 @@ serializer = URLSafeTimedSerializer(app.secret_key)
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
     raise RuntimeError("DATABASE_URL not set")
+try:
+    db_pool = SimpleConnectionPool(
+        minconn=1,
+        maxconn=10,
+        dsn=DATABASE_URL,
+        cursor_factory=psycopg2.extras.RealDictCursor
+    )
+except psycopg2.OperationalError as e:
+    print("⚠️ Database not reachable. Running without DB pool.")
+    db_pool = None
+
+import atexit
+
+if db_pool:
+    atexit.register(db_pool.closeall)
+
 
 # ------------------------------------------------------------------------------
 # DB HELPERS
@@ -58,17 +78,24 @@ if not DATABASE_URL:
 
 def get_db():
     if "db" not in g:
-        g.db = psycopg2.connect(
-            DATABASE_URL,
-            cursor_factory=psycopg2.extras.RealDictCursor
-        )
+        if db_pool:
+            g.db = db_pool.getconn()
+        else:
+            g.db = psycopg2.connect(
+                DATABASE_URL,
+                cursor_factory=psycopg2.extras.RealDictCursor
+            )
     return g.db
 
 @app.teardown_appcontext
 def close_db(_=None):
     db = g.pop("db", None)
     if db:
-        db.close()
+        if db_pool:
+            db_pool.putconn(db)
+        else:
+            db.close()
+
 
 # ------------------------------------------------------------------------------
 # DATABASE INIT
@@ -210,11 +237,14 @@ def register():
                 generate_password_hash(request.form["password"])
             ))
             db.commit()
-            flash("Registered successfully", "success")
+            flash("Registered successfully. Please login.", "success")
+            return redirect(url_for("login"))   # ✅ FIX
         except UniqueViolation:
             db.rollback()
             flash("Username already exists", "danger")
+
     return render_template("register.html")
+
 
 @app.route("/reset-request", methods=["GET", "POST"])
 def reset_request():
@@ -376,19 +406,29 @@ def admin_required(fn):
         return fn(*args, **kwargs)
     return wrapper
 
-
 @app.route("/admin/users")
 @admin_required
 def admin_users():
     db = get_db()
     cur = db.cursor()
+
     cur.execute("""
-        SELECT id, username, role, voted
-        FROM users
-        ORDER BY username
+        SELECT id, username, role, voted FROM users
     """)
     users = cur.fetchall()
-    return render_template("admin_users.html", users=users)
+
+    admins = sum(1 for u in users if u["role"] == "admin")
+    voted = sum(1 for u in users if u["voted"])
+    not_voted = sum(1 for u in users if not u["voted"] and u["role"] != "admin")
+
+    return render_template(
+        "admin_users.html",
+        users=users,
+        admins=admins,
+        voted=voted,
+        not_voted=not_voted
+    )
+
 
 @app.route("/admin/users/<int:user_id>/promote", methods=["POST"])
 @admin_required
