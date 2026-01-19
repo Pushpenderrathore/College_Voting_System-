@@ -136,9 +136,13 @@ def init_database():
     cur.close()
     db.close()
 
-@app.before_first_request
+# Flask 3.x compatible DB initialization
+@app.before_request
 def startup():
-    init_database()
+    if not hasattr(app, "_db_initialized"):
+        init_database()
+        app._db_initialized = True
+
 
 # ------------------------------------------------------------------------------
 # CSRF
