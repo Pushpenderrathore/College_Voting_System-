@@ -405,15 +405,12 @@ def admin_required(fn):
 def admin_users():
     db = get_db()
     cur = db.cursor()
-
-    cur.execute("""
-        SELECT id, username, role, voted FROM users
-    """)
+    cur.execute("SELECT id, username, role, voted FROM users ORDER BY username")
     users = cur.fetchall()
 
     admins = sum(1 for u in users if u["role"] == "admin")
     voted = sum(1 for u in users if u["voted"])
-    not_voted = sum(1 for u in users if not u["voted"] and u["role"] != "admin")
+    not_voted = sum(1 for u in users if not u["voted"])
 
     return render_template(
         "admin_users.html",
@@ -422,6 +419,7 @@ def admin_users():
         voted=voted,
         not_voted=not_voted
     )
+
 
 
 @app.route("/admin/users/<int:user_id>/promote", methods=["POST"])
