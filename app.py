@@ -26,7 +26,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev-secret")
 
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SECURE=not app.debug,
+    SESSION_COOKIE_SECURE= True ,      # optional not app.debug,
     SESSION_COOKIE_SAMESITE="Lax",
     PERMANENT_SESSION_LIFETIME=timedelta(minutes=30),
 )
@@ -45,7 +45,7 @@ socketio = SocketIO(
     cors_allowed_origins="*"
 )
 
-# socketio = SocketIO(app, async_mode="threading") # optional "eventlet"
+# socketio = SocketIO(app, async_mode="threading") optional "eventlet"
 serializer = URLSafeTimedSerializer(app.secret_key)
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -582,4 +582,10 @@ def logout():
     return redirect(url_for("login"))
 
 if __name__ == "__main__":
-    socketio.run(app, host="0.0.0.0", port=5000, debug=True)
+    socketio.run(
+        app,
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 5000)),
+        debug=False
+    )
+
