@@ -39,7 +39,13 @@ limiter = Limiter(
     storage_uri=os.environ.get("REDIS_URL", "memory://")
 )
 
-socketio = SocketIO(app, async_mode="threading") # optional "eventlet"
+socketio = SocketIO(
+    app,
+    async_mode="threading",
+    cors_allowed_origins="*"
+)
+
+# socketio = SocketIO(app, async_mode="threading") # optional "eventlet"
 serializer = URLSafeTimedSerializer(app.secret_key)
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -130,7 +136,8 @@ def init_database():
     cur.close()
     db.close()
 
-with app.app_context():
+@app.before_first_request
+def startup():
     init_database()
 
 # ------------------------------------------------------------------------------
