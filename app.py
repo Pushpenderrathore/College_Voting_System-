@@ -196,6 +196,13 @@ def audit(action, details=""):
     ))
 
 
+def has_given_feedback(user_id):
+    db = get_db()
+    cur = db.cursor()
+    cur.execute("SELECT 1 FROM feedback WHERE user_id=%s", (user_id,))
+    return cur.fetchone() is not None
+
+
 def get_user(username):
     db = get_db()
     cur = db.cursor()
@@ -325,8 +332,12 @@ def vote():
 
     db = get_db()
     cur = db.cursor()
+    
     cur.execute("SELECT voted FROM users WHERE id=%s", (session["user_id"],))
     voted = cur.fetchone()["voted"]
+    
+    has_feedback = has_given_feedback(session["user_id"])
+
 
     if request.method == "POST" and not voted:
         try:
