@@ -188,7 +188,13 @@ def audit(action, details=""):
     cur.execute("""
         INSERT INTO audit (action, username, details, timestamp)
         VALUES (%s, %s, %s, %s)
-    """, (action, session.get("username"), details, datetime.utcnow()))
+    """, (
+        action,
+        session.get("username", "system"),
+        details,
+        datetime.utcnow()
+    ))
+
 
 def get_user(username):
     db = get_db()
