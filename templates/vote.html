@@ -7,7 +7,7 @@
         <h3 class="card-title mb-3">Cast your vote</h3>
         {% if has_voted %}
           <div class="alert alert-success">You have already voted. Thank you for participating.</div>
-          {% if not has_given_feedback %}
+          {% if not has_feedback %}
             <p><a href="{{ url_for('feedback') }}" class="btn btn-secondary">Provide Feedback</a></p>
           {% else %}
             <p class="text-muted">You have already provided feedback. Thank you!</p>

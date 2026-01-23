@@ -356,7 +356,13 @@ def vote():
             flash("You already voted", "danger")
 
     cur.execute("SELECT id, name FROM candidates ORDER BY name")
-    return render_template("vote.html", candidates=cur.fetchall(), has_voted=voted)
+    return render_template(
+    "vote.html",
+    candidates=cur.fetchall(),
+    has_voted=voted,
+    has_feedback=has_feedback
+)
+
 
 # ------------------------------------------------------------------------------
 # FEEDBACK (FIXED)
